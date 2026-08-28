@@ -3,10 +3,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import api, { DocumentResponse } from '@/lib/api';
+import api, { DocumentResponse, RAGResponse } from '@/lib/api';
 import DocumentUploadModal from '@/components/documents/DocumentUploadModal';
 import DocumentList from '@/components/documents/DocumentList';
 import DeleteConfirmModal from '@/components/documents/DeleteConfirmModal';
+import AskPanel from '@/components/rag/AskPanel';
+import AnswerCard from '@/components/rag/AnswerCard';
 
 function formatBytes(bytes: number, decimals = 1): string {
   if (bytes === 0) return '0 B';
@@ -29,6 +31,11 @@ export default function DashboardPage() {
   // Modals state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [documentToDelete, setDocumentToDelete] = useState<DocumentResponse | null>(null);
+
+  // RAG state
+  const [ragResponse, setRagResponse] = useState<RAGResponse | null>(null);
+  const [ragLoading, setRagLoading] = useState<boolean>(false);
+  const [ragError, setRagError] = useState<string | null>(null);
 
   // Toast / Status notification state
   const [bannerNotice, setBannerNotice] = useState<{
@@ -288,6 +295,52 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        {/* RAG Ask Section */}
+        <section className="space-y-4">
+          <AskPanel
+            documents={documents}
+            onAnswer={(response) => {
+              setRagResponse(response);
+              setRagError(null);
+            }}
+            onError={(error) => {
+              setRagError(error);
+              setRagResponse(null);
+            }}
+            loading={ragLoading}
+          />
+
+          {/* RAG Error */}
+          {ragError && (
+            <div className="bg-white dark:bg-slate-800/90 rounded-xl shadow-xs border border-red-200/80 dark:border-red-800/50 p-5">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg flex-shrink-0">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-red-800 dark:text-red-200">
+                    Error
+                  </h3>
+                  <p className="text-sm text-red-600 dark:text-red-300 mt-0.5">
+                    {ragError}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setRagError(null)}
+                  className="text-red-400 hover:text-red-600 dark:hover:text-red-200 p-1 ml-auto"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* RAG Answer */}
+          {ragResponse && <AnswerCard response={ragResponse} />}
+        </section>
 
         {/* Document Management Section */}
         <section className="space-y-4">

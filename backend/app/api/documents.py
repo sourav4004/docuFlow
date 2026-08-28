@@ -11,10 +11,11 @@ from ..core.database import get_db
 from ..core.auth import get_current_user
 from ..models.user import User
 from ..models.document import Document
-from ..schemas.document import DocumentResponse, DocumentListResponse, DocumentStatusResponse, DocumentContentResponse
+from ..schemas.document import DocumentResponse, DocumentListResponse, DocumentStatusResponse, DocumentContentResponse, DocumentChunksResponse, ChunkResponse
 from ..schemas.auth import MessageResponse
 from ..services.storage import storage_service
 from ..services.document_processor import process_document
+from ..services.chunk_service import get_chunks_for_document
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +305,54 @@ def delete_document(
         pass
 
     return MessageResponse(message="Document deleted successfully")
+
+
+# ---------------------------------------------------------------------------
+# Document chunks endpoint
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{document_id}/chunks",
+    response_model=DocumentChunksResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get document text chunks"
+)
+def get_document_chunks(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return text chunks for a document owned by the authenticated user.
+    Ordered by chunk_index. For debugging and verification."""
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+
+    chunks = get_chunks_for_document(db, document_id)
+
+    return DocumentChunksResponse(
+        document_id=document.id,
+        total_chunks=len(chunks),
+        chunks=[
+            ChunkResponse(
+                id=c.id,
+                chunk_index=c.chunk_index,
+                text=c.text,
+                char_start=c.char_start,
+                char_end=c.char_end,
+                page_start=c.page_start,
+                page_end=c.page_end,
+            )
+            for c in chunks
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------

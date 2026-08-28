@@ -7,7 +7,7 @@ from alembic import context
 
 from app.core.config import settings
 from app.core.database import Base
-from app.models import User, Document, DocumentContent  # Import models for autogenerate
+from app.models import User, Document, DocumentContent, DocumentChunk  # Import models for autogenerate
 
 # this is the Alembic Config object
 config = context.config

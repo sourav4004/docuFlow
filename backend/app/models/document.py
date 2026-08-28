@@ -30,6 +30,9 @@ class Document(Base):
     # Relationship to extracted content
     content = relationship("DocumentContent", back_populates="document", uselist=False, cascade="all, delete-orphan")
 
+    # Relationship to text chunks
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan", order_by="DocumentChunk.chunk_index")
+
     # Composite index for common queries
     __table_args__ = (
         Index("ix_documents_user_created", "user_id", "created_at"),

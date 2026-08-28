@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from ..models.document import Document
 from ..models.document_content import DocumentContent
 from .pdf_extractor import extract_text_from_pdf, PDFExtractionError, PDFNotFoundError
+from .text_normalizer import normalize_text
+from .chunker import chunk_text
+from .chunk_service import persist_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -67,34 +70,48 @@ def process_document(db: Session, document_id: int) -> None:
         _mark_failed(db, document, f"Unexpected error: {exc}")
         return
 
-    # Save extracted content (upsert — replace if retry)
+    # Normalize extracted text
+    normalized_text = normalize_text(result.text)
+    normalized_char_count = len(normalized_text)
+
+    # Chunk the normalized text
+    try:
+        chunks = chunk_text(normalized_text)
+    except Exception as exc:
+        _mark_failed(db, document, f"Chunking failed: {exc}")
+        return
+
+    # Save extracted content + chunks (upsert — replace if retry)
     try:
         existing = db.query(DocumentContent).filter(
             DocumentContent.document_id == document.id
         ).first()
 
         if existing:
-            existing.extracted_text = result.text
+            existing.extracted_text = normalized_text
             existing.page_count = result.page_count
-            existing.char_count = result.char_count
+            existing.char_count = normalized_char_count
         else:
             content = DocumentContent(
                 document_id=document.id,
-                extracted_text=result.text,
+                extracted_text=normalized_text,
                 page_count=result.page_count,
-                char_count=result.char_count,
+                char_count=normalized_char_count,
             )
             db.add(content)
+
+        # Persist chunks (atomic replace)
+        persist_chunks(db, document.id, chunks)
 
         document.status = STATUS_READY
         db.commit()
         logger.info(
-            "process_document: document %s processed successfully (%d pages, %d chars)",
-            document_id, result.page_count, result.char_count,
+            "process_document: document %s processed successfully (%d pages, %d chars, %d chunks)",
+            document_id, result.page_count, normalized_char_count, len(chunks),
         )
     except Exception:
         db.rollback()
-        _mark_failed(db, document, "Failed to save extracted content")
+        _mark_failed(db, document, "Failed to save extracted content and chunks")
 
 
 def _mark_failed(db: Session, document: Document, error_message: str) -> None:

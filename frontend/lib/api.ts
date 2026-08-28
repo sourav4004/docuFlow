@@ -45,6 +45,32 @@ export interface DeleteResponse {
   message: string;
 }
 
+// RAG types
+export interface RAGSource {
+  document_id: number;
+  filename: string | null;
+  chunk_id: number;
+  chunk_index: number;
+  page_start: number | null;
+  page_end: number | null;
+  similarity_score: number | null;
+}
+
+export interface RAGRequest {
+  question: string;
+  document_id?: number | null;
+  top_k?: number;
+}
+
+export interface RAGResponse {
+  answer: string;
+  sources: RAGSource[];
+  grounded: boolean;
+  retrieval_count: number;
+  model: string | null;
+  provider: string | null;
+}
+
 export interface DocumentStatusResponse {
   document_id: number;
   status: string;
@@ -269,6 +295,24 @@ export const api = {
 
     if (!response.ok) {
       await handleApiError(response, `Failed to retry processing for document #${id}`);
+    }
+
+    return response.json();
+  },
+
+  // RAG endpoint
+  async askQuestion(data: RAGRequest): Promise<RAGResponse> {
+    const response = await fetch(`${API_URL}/rag/ask`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      await handleApiError(response, 'Failed to process your question');
     }
 
     return response.json();
