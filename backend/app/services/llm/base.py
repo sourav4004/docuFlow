@@ -7,7 +7,7 @@ The rest of DocuFlow interacts with LLMProvider, not vendor SDKs.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -92,3 +92,29 @@ class LLMProvider(ABC):
             LLMProviderError: If generation fails.
             LLMTimeoutError: If the request times out.
         """
+
+    def stream_generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> Iterator[str]:
+        """Generate a response incrementally via streaming.
+
+        Default implementation falls back to non-streaming generate().
+        Subclasses that support streaming should override this method.
+
+        Args:
+            system_prompt: System-level instructions for the model.
+            user_prompt: The user's question or request.
+
+        Yields:
+            Text chunks as they are generated.
+
+        Raises:
+            LLMProviderError: If generation fails.
+            LLMTimeoutError: If the request times out.
+        """
+        response = self.generate(system_prompt=system_prompt, user_prompt=user_prompt)
+        # Yield the complete response as a single chunk for non-streaming providers
+        if response.text:
+            yield response.text

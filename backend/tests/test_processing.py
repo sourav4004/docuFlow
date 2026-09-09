@@ -120,18 +120,18 @@ def get_test_db():
 # ==========================================================================
 
 def test_new_document_has_uploaded_status():
-    """Test that a newly uploaded document has UPLOADED status."""
+    """Test that a newly uploaded document has QUEUED status (durable pipeline)."""
     cookies = register_and_login(email="lifecycle1@example.com")
     doc = upload_and_get_doc(cookies, "new_doc.pdf")
 
-    assert doc["status"] == "UPLOADED"
+    assert doc["status"] == "QUEUED"
 
     # Verify in DB
     db = TestingSessionLocal()
     try:
         db_doc = db.query(Document).filter(Document.id == doc["id"]).first()
         assert db_doc is not None
-        assert db_doc.status == "UPLOADED"
+        assert db_doc.status == "QUEUED"
     finally:
         db.close()
 
@@ -144,7 +144,7 @@ def test_processing_changes_status_to_processing():
     db = TestingSessionLocal()
     try:
         db_doc = db.query(Document).filter(Document.id == doc["id"]).first()
-        assert db_doc.status == "UPLOADED"
+        assert db_doc.status == "QUEUED"
 
         # Manually trigger processing
         process_document(db, db_doc.id)
@@ -404,7 +404,7 @@ def test_owner_can_retrieve_status():
     assert resp.status_code == 200
     data = resp.json()
     assert data["document_id"] == doc["id"]
-    assert data["status"] == "UPLOADED"
+    assert data["status"] == "QUEUED"
     assert "created_at" in data
     assert "updated_at" in data
 
@@ -662,7 +662,7 @@ def test_end_to_end_real_pdf():
     # 2. Verify initial status
     status_resp = client.get(f"/documents/{doc_id}/status", cookies=cookies)
     assert status_resp.status_code == 200
-    assert status_resp.json()["status"] == "UPLOADED"
+    assert status_resp.json()["status"] == "QUEUED"
 
     # 3. Verify DB record
     db = TestingSessionLocal()

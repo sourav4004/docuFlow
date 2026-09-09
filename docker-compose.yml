@@ -18,5 +18,45 @@ services:
       timeout: 5s
       retries: 5
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: docuflow_backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-docuflow_user}:${POSTGRES_PASSWORD:-docuflow_password}@postgres:5432/${POSTGRES_DB:-docuflow_db}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - storage_data:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: docuflow_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  storage_data:

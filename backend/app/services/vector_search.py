@@ -1,7 +1,7 @@
 """Vector similarity search service for document chunks.
 
-Provides semantic search over document embeddings using pgvector.
-Similarity is calculated inside PostgreSQL — not in Python.
+Provides semantic search over document embeddings using the configured
+vector backend (pgvector or JSON fallback).
 
 Pipeline:
 
@@ -11,7 +11,7 @@ EmbeddingProvider
     ↓
 query embedding
     ↓
-VectorSearchService (PostgreSQL pgvector)
+VectorBackend (pgvector or JSON fallback)
     ↓
 ranked DocumentChunks
 """
@@ -20,11 +20,11 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..models.document_chunk import DocumentChunk
 from ..models.document import Document
+from .vector_backend import get_vector_backend_singleton, VectorSearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def search_similar_chunks(
 ) -> List[SearchResult]:
     """Search for document chunks most similar to a query embedding.
 
-    Uses pgvector cosine similarity computed inside PostgreSQL.
+    Uses the configured vector backend for similarity search.
     Enforces user ownership — only returns chunks belonging to the user.
 
     Args:
@@ -80,54 +80,30 @@ def search_similar_chunks(
             f"top_k must be between 1 and {MAX_TOP_K}, got {top_k}"
         )
 
-    # Convert embedding to pgvector format: '[0.1, 0.2, ...]'
-    embedding_str = "[" + ", ".join(str(v) for v in query_embedding) + "]"
+    # Use the vector backend abstraction
+    backend = get_vector_backend_singleton()
+    results = backend.search(db, user_id, query_embedding, top_k, document_id)
 
-    # Build the query with ownership filtering
-    # Uses raw SQL for pgvector operator (<=>) which is cosine distance
-    # cosine distance = 1 - cosine similarity
-    # So lower distance = more similar
-    query = """
-        SELECT
-            dc.document_id,
-            dc.id AS chunk_id,
-            dc.chunk_index,
-            dc.text,
-            (1 - (dc.embedding <=> :query_vec)) AS similarity_score,
-            dc.page_start,
-            dc.page_end,
-            d.original_filename
-        FROM document_chunks dc
-        JOIN documents d ON d.id = dc.document_id
-        WHERE d.user_id = :user_id
-          AND dc.embedding IS NOT NULL
-    """
-
-    params = {
-        "query_vec": embedding_str,
-        "user_id": user_id,
-    }
-
-    if document_id is not None:
-        query += " AND dc.document_id = :document_id"
-        params["document_id"] = document_id
-
-    query += " ORDER BY dc.embedding <=> :query_vec LIMIT :top_k"
-    params["top_k"] = top_k
-
-    result = db.execute(text(query), params)
-    rows = result.fetchall()
-
+    # Convert to SearchResult format for backward compatibility
     return [
         SearchResult(
-            document_id=row.document_id,
-            chunk_id=row.chunk_id,
-            chunk_index=row.chunk_index,
-            text=row.text,
-            similarity_score=float(row.similarity_score),
-            page_start=row.page_start,
-            page_end=row.page_end,
-            original_filename=row.original_filename,
+            document_id=r.document_id,
+            chunk_id=r.chunk_id,
+            chunk_index=r.chunk_index,
+            text=r.text,
+            similarity_score=r.similarity_score,
+            page_start=r.page_start,
+            page_end=r.page_end,
+            original_filename=r.original_filename,
         )
-        for row in rows
+        for r in results
     ]
+
+
+def get_vector_backend_info() -> dict:
+    """Get information about the active vector backend."""
+    backend = get_vector_backend_singleton()
+    return {
+        "backend": backend.name,
+        "available": backend.is_available,
+    }

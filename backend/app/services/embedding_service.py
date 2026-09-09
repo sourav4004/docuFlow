@@ -42,9 +42,10 @@ def get_embedding_provider() -> EmbeddingProvider:
     elif provider_name == "openai":
         from .embeddings.openai_provider import OpenAIEmbeddingProvider
         return OpenAIEmbeddingProvider(
-            api_key=settings.embedding_api_key,
-            model=settings.embedding_model,
+            api_key=settings.openai_api_key,
+            model=settings.openai_embedding_model,
             dimension=settings.embedding_dimension,
+            timeout=settings.openai_embedding_timeout,
         )
     else:
         raise ValueError(f"Unknown embedding provider: {provider_name!r}")

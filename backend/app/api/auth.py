@@ -70,7 +70,7 @@ def register(
     db.refresh(new_user)
 
     # Create session
-    create_session(new_user.id, response)
+    create_session(new_user.id, response, db)
 
     return new_user
 
@@ -102,7 +102,7 @@ def login(
         )
 
     # Create session
-    create_session(user.id, response)
+    create_session(user.id, response, db)
 
     return user
 
@@ -111,7 +111,8 @@ def login(
 def logout(
     request: Request,
     response: Response,
-    current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Logout the current user.
@@ -119,7 +120,7 @@ def logout(
     - Invalidates session
     - Clears authentication cookie
     """
-    invalidate_session(request, response)
+    invalidate_session(request, response, db)
 
     return {"message": "Successfully logged out"}
 

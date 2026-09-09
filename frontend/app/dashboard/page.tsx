@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import api, { DocumentResponse, RAGResponse } from '@/lib/api';
@@ -43,11 +43,16 @@ export default function DashboardPage() {
     text: string;
   } | null>(null);
 
-  const fetchDocuments = useCallback(async () => {
+  // Document search state
+  const [docSearch, setDocSearch] = useState('');
+  const [docSearchLoading, setDocSearchLoading] = useState(false);
+  const docSearchRequestIdRef = useRef(0);
+
+  const fetchDocuments = useCallback(async (searchQuery?: string) => {
     setLoadingDocs(true);
     setDocsError(null);
     try {
-      const response = await api.listDocuments(100, 0);
+      const response = await api.listDocuments(100, 0, searchQuery);
       setDocuments(response.items || []);
     } catch (err) {
       setDocsError(err instanceof Error ? err.message : 'Failed to load documents');
@@ -86,6 +91,33 @@ export default function DashboardPage() {
     };
   }, [user]);
 
+  // Poll documents in QUEUED/PROCESSING state
+  useEffect(() => {
+    if (!user) return;
+    const processingDocs = documents.filter((d) =>
+      d.status === 'QUEUED' || d.status === 'PROCESSING' || d.status === 'UPLOADED'
+    );
+    if (processingDocs.length === 0) return;
+
+    let mounted = true;
+    const interval = setInterval(async () => {
+      if (!mounted) return;
+      try {
+        const response = await api.listDocuments(100, 0);
+        if (mounted) {
+          setDocuments(response.items || []);
+        }
+      } catch {
+        // Silently ignore polling errors
+      }
+    }, 2000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [user, documents]);
+
   // Auto-dismiss banner notices
   useEffect(() => {
     if (bannerNotice) {
@@ -93,6 +125,36 @@ export default function DashboardPage() {
       return () => clearTimeout(timer);
     }
   }, [bannerNotice]);
+
+  // Document search debounce
+  useEffect(() => {
+    const trimmed = docSearch.trim();
+    if (!trimmed) {
+      fetchDocuments();
+      return;
+    }
+    const requestId = ++docSearchRequestIdRef.current;
+    setDocSearchLoading(true);
+    const debounce = setTimeout(async () => {
+      try {
+        const response = await api.listDocuments(100, 0, trimmed);
+        if (requestId === docSearchRequestIdRef.current) {
+          setDocuments(response.items || []);
+          setDocsError(null);
+        }
+      } catch (err) {
+        if (requestId === docSearchRequestIdRef.current) {
+          setDocsError(err instanceof Error ? err.message : 'Failed to search documents');
+        }
+      } finally {
+        if (requestId === docSearchRequestIdRef.current) {
+          setDocSearchLoading(false);
+          setLoadingDocs(false);
+        }
+      }
+    }, 300);
+    return () => clearTimeout(debounce);
+  }, [docSearch, fetchDocuments]);
 
   const handleLogout = async () => {
     try {
@@ -165,8 +227,68 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* Navigation */}
+            <div className="flex items-center space-x-2">
+              <a
+                href="/ai"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>AI</span>
+              </a>
+              <a
+                href="/intelligence"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span>Intelligence</span>
+              </a>
+              <a
+                href="/ops"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Ops</span>
+              </a>
+              <a
+                href="/conversations"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <span>Conversations</span>
+              </a>
+              <a
+                href="/collections"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span>Collections</span>
+              </a>
+            </div>
+
             {/* User Profile & Actions */}
             <div className="flex items-center space-x-4">
+              <a
+                href="/settings"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Settings</span>
+              </a>
               <div className="hidden sm:block text-right">
                 <p className="text-sm font-semibold text-slate-900 dark:text-white leading-none">
                   {user.name}
@@ -358,7 +480,7 @@ export default function DashboardPage() {
             <div className="flex items-center space-x-3">
               {/* Refresh Button */}
               <button
-                onClick={fetchDocuments}
+                onClick={() => fetchDocuments(docSearch.trim() || undefined)}
                 disabled={loadingDocs}
                 className="inline-flex items-center space-x-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg shadow-2xs transition-colors disabled:opacity-50"
                 title="Reload document list"
@@ -385,6 +507,30 @@ export default function DashboardPage() {
                 <span>Upload Document</span>
               </button>
             </div>
+          </div>
+
+          {/* Document search */}
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search documents by filename..."
+              value={docSearch}
+              onChange={(e) => setDocSearch(e.target.value)}
+              className="w-full pl-10 pr-9 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+            />
+            {docSearch && (
+              <button
+                onClick={() => setDocSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {/* Document List Component */}

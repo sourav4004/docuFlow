@@ -404,6 +404,7 @@ class TestProcessingPipelineIntegration:
         """Ensure normalized text (not raw) is passed to DocumentContent."""
         from unittest.mock import patch, MagicMock
         from app.services.document_processor import process_document
+        from app.models.job import ProcessingJob
 
         raw_text = "Hello    world\r\n\n\n\nMore  text"
         expected_normalized = "Hello world\n\nMore text"
@@ -416,24 +417,33 @@ class TestProcessingPipelineIntegration:
         mock_db = MagicMock()
         mock_doc = MagicMock()
         mock_doc.id = 1
+        mock_doc.user_id = 1
         mock_doc.status = "UPLOADED"
         mock_doc.storage_key = "test_key"
         mock_doc.content = None  # No existing content → upsert creates new
 
         # First query: Document lookup → mock_doc
-        # Second query: DocumentContent lookup → None (no existing content)
+        # Second query: ProcessingJob lookup → None (no existing job)
+        # Third query: DocumentContent lookup → None (no existing content)
         query_mock = MagicMock()
         filter_mock = MagicMock()
         query_mock.filter.return_value = filter_mock
-        filter_mock.first.side_effect = [mock_doc, None]
+        filter_mock.first.side_effect = [mock_doc, None, None]
         mock_db.query.return_value = query_mock
 
         with patch("app.services.document_processor.extract_text_from_pdf", return_value=mock_result):
             process_document(mock_db, 1)
 
             # Check that DocumentContent was created with normalized text
+            # First add is ProcessingJob, second add is DocumentContent
             db_add_calls = mock_db.add.call_args_list
-            assert len(db_add_calls) == 1
-            content_arg = db_add_calls[0][0][0]
+            assert len(db_add_calls) == 2
+            
+            # First add should be ProcessingJob
+            job_arg = db_add_calls[0][0][0]
+            assert isinstance(job_arg, ProcessingJob)
+            
+            # Second add should be DocumentContent
+            content_arg = db_add_calls[1][0][0]
             assert content_arg.extracted_text == expected_normalized
             assert content_arg.char_count == len(expected_normalized)

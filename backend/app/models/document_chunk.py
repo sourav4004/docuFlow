@@ -37,6 +37,12 @@ class DocumentChunk(Base):
     # Dimension matches EMBEDDING_DIMENSION setting (default 384).
     embedding = Column(Vector(384), nullable=True)
 
+    # NOTE: search_vector (TSVECTOR) column exists in PostgreSQL but is NOT
+    # defined here because TSVECTOR is not compatible with SQLite (used in tests).
+    # The column is managed by migration 009 and a PostgreSQL trigger that
+    # auto-populates it from the 'text' column on INSERT/UPDATE.
+    # See keyword_search.py for full-text search queries.
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

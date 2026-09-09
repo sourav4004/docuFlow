@@ -5,7 +5,8 @@ Used for unit tests and development without paid LLM credentials.
 """
 
 import logging
-from typing import Optional
+import time
+from typing import Optional, Iterator
 
 from .base import LLMProvider, LLMResponse
 
@@ -81,3 +82,22 @@ class FakeLLMProvider(LLMProvider):
             output_tokens=len(text.split()),
             total_tokens=len(system_prompt.split()) + len(user_prompt.split()) + len(text.split()),
         )
+
+    def stream_generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> Iterator[str]:
+        """Generate a fake streaming response.
+
+        Yields words from the generated response one at a time
+        to simulate token-by-token streaming.
+        """
+        response = self.generate(system_prompt=system_prompt, user_prompt=user_prompt)
+        words = response.text.split()
+        for i, word in enumerate(words):
+            # Yield space-prefixed words except the first
+            if i == 0:
+                yield word
+            else:
+                yield f" {word}"

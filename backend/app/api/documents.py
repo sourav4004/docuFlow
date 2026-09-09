@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response, status, BackgroundTasks
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -11,6 +12,7 @@ from ..core.database import get_db
 from ..core.auth import get_current_user
 from ..models.user import User
 from ..models.document import Document
+from ..models.job import ProcessingJob, JobStatus
 from ..schemas.document import DocumentResponse, DocumentListResponse, DocumentStatusResponse, DocumentContentResponse, DocumentChunksResponse, ChunkResponse
 from ..schemas.auth import MessageResponse
 from ..services.storage import storage_service
@@ -47,6 +49,7 @@ async def upload_document(
 
     Validates file presence, size limits, and PDF file signature.
     Stores the physical file securely using StorageService and records metadata in PostgreSQL.
+    Creates a processing job for background processing.
     """
     if not file or not file.filename:
         raise HTTPException(
@@ -116,7 +119,7 @@ async def upload_document(
             detail="Failed to store document file."
         )
 
-    # 5. Save metadata record to Database and trigger processing
+    # 5. Save metadata record to Database and create processing job
     try:
         document = Document(
             user_id=current_user.id,
@@ -127,6 +130,19 @@ async def upload_document(
             status="UPLOADED"
         )
         db.add(document)
+        db.flush()  # Get document.id before creating job
+
+        # Create database-backed processing job
+        job = ProcessingJob(
+            document_id=document.id,
+            user_id=current_user.id,
+            status=JobStatus.QUEUED.value,
+            attempts=0,
+        )
+        db.add(job)
+        
+        # Update document status to QUEUED
+        document.status = "QUEUED"
         db.commit()
         db.refresh(document)
 
@@ -157,14 +173,27 @@ async def upload_document(
 def list_documents(
     limit: int = Query(20, ge=1, le=100, description="Number of items to return"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
+    search: Optional[str] = Query(None, max_length=200, description="Search filenames (case-insensitive)"),
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Retrieve a paginated list of documents owned by the authenticated user.
     Database-level filtering ensures user isolation.
+    Optional search parameter filters by filename (case-insensitive partial match).
+    Optional status parameter filters by processing status.
     """
     query = db.query(Document).filter(Document.user_id == current_user.id)
+
+    if search and search.strip():
+        query = query.filter(Document.original_filename.ilike(f"%{search.strip()}%"))
+
+    if status_filter and status_filter.strip():
+        valid_statuses = {"UPLOADED", "QUEUED", "PROCESSING", "READY", "FAILED"}
+        if status_filter.strip().upper() in valid_statuses:
+            query = query.filter(Document.status == status_filter.strip().upper())
+
     total = query.count()
     items = query.order_by(Document.created_at.desc(), Document.id.desc()).offset(offset).limit(limit).all()
 
@@ -256,6 +285,111 @@ def get_document_file(
             "Content-Length": str(len(content)),
         }
     )
+
+
+@router.patch(
+    "/{document_id}",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update document metadata"
+)
+def update_document(
+    document_id: int,
+    filename: Optional[str] = Query(None, max_length=255, description="New filename"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update document metadata (rename). Owner-only."""
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id,
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if filename is not None:
+        sanitized = Path(filename).name.strip()
+        if not sanitized:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Filename cannot be empty",
+            )
+        document.original_filename = sanitized
+
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+@router.get(
+    "/{document_id}/details",
+    status_code=status.HTTP_200_OK,
+    summary="Get detailed document information"
+)
+def get_document_details(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return detailed document info including chunks, collections, job history."""
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id,
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Get chunk count
+    from ..services.chunk_service import get_chunks_for_document
+    chunks = get_chunks_for_document(db, document_id)
+
+    # Get job history
+    jobs = db.query(ProcessingJob).filter(
+        ProcessingJob.document_id == document_id,
+    ).order_by(ProcessingJob.id.desc()).all()
+
+    # Get collections
+    from ..models.collection import Collection
+    collections = db.query(Collection).filter(
+        Collection.documents.any(Document.id == document_id),
+        Collection.user_id == current_user.id,
+    ).all()
+
+    # Compute processing duration if available
+    processing_duration = None
+    if jobs:
+        latest_job = jobs[0]
+        if latest_job.started_at and latest_job.completed_at:
+            processing_duration = (latest_job.completed_at - latest_job.started_at).total_seconds()
+
+    return {
+        "id": document.id,
+        "filename": document.original_filename,
+        "mime_type": document.mime_type,
+        "file_size": document.file_size,
+        "status": document.status,
+        "created_at": document.created_at.isoformat() if document.created_at else None,
+        "updated_at": document.updated_at.isoformat() if document.updated_at else None,
+        "chunk_count": len(chunks),
+        "has_embeddings": any(c.embedding is not None for c in chunks) if chunks else False,
+        "processing_duration_seconds": processing_duration,
+        "collection_count": len(collections),
+        "collections": [{"id": c.id, "name": c.name} for c in collections],
+        "latest_job": {
+            "id": jobs[0].id,
+            "status": jobs[0].status,
+            "attempts": jobs[0].attempts,
+            "error_message": jobs[0].error_message,
+        } if jobs else None,
+    }
 
 
 @router.delete(
@@ -490,7 +624,7 @@ def retry_processing(
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    """Re-queue a document for processing. Owner-only."""
+    """Re-queue a document for processing with retry support. Owner-only."""
     document = db.query(Document).filter(
         Document.id == document_id,
         Document.user_id == current_user.id
@@ -519,7 +653,38 @@ def retry_processing(
             updated_at=document.updated_at,
         )
 
-    # Transition to QUEUED
+    # Get existing job or create new one for retry
+    job = db.query(ProcessingJob).filter(
+        ProcessingJob.document_id == document_id
+    ).order_by(ProcessingJob.id.desc()).first()
+
+    if job and job.status == JobStatus.COMPLETED.value:
+        # Already completed, don't reprocess
+        return DocumentStatusResponse(
+            document_id=document.id,
+            status=document.status,
+            created_at=document.created_at,
+            updated_at=document.updated_at,
+        )
+
+    # Create new job for retry if needed, or update existing
+    if job and job.attempts < job.max_attempts:
+        # Reset existing job
+        job.status = JobStatus.QUEUED.value
+        job.error_message = None
+        job.started_at = None
+        job.completed_at = None
+    else:
+        # Create new job
+        job = ProcessingJob(
+            document_id=document_id,
+            user_id=current_user.id,
+            status=JobStatus.QUEUED.value,
+            attempts=0,
+        )
+        db.add(job)
+
+    # Transition document to QUEUED
     document.status = "QUEUED"
     db.commit()
     db.refresh(document)
@@ -533,3 +698,52 @@ def retry_processing(
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# Jobs endpoint — list processing jobs for a document
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{document_id}/jobs",
+    status_code=status.HTTP_200_OK,
+    summary="Get processing jobs for a document"
+)
+def get_document_jobs(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return processing jobs for a document owned by the authenticated user."""
+    # Verify document ownership
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id
+    ).first()
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+
+    jobs = db.query(ProcessingJob).filter(
+        ProcessingJob.document_id == document_id
+    ).order_by(ProcessingJob.id.desc()).all()
+
+    return {
+        "document_id": document.id,
+        "jobs": [
+            {
+                "id": j.id,
+                "status": j.status,
+                "attempts": j.attempts,
+                "max_attempts": j.max_attempts,
+                "error_message": j.error_message,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "started_at": j.started_at.isoformat() if j.started_at else None,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            }
+            for j in jobs
+        ],
+    }

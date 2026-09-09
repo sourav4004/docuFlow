@@ -28,6 +28,13 @@ dist/
 # Production
 /build
 
+# Runtime artifacts & local state (never commit)
+cookies.txt
+storage/
+.testreports/
+.freebuff/
+*.log.err
+
 # Testing
 .coverage
 .pytest_cache/

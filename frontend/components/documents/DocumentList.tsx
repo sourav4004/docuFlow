@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import api, { DocumentResponse, DocumentContentResponse } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import api, { DocumentResponse } from '@/lib/api';
+import { formatBytes, formatDate, statusLabel } from '@/lib/format';
 
 interface DocumentListProps {
   documents: DocumentResponse[];
@@ -12,31 +14,7 @@ interface DocumentListProps {
   onDeleteRequest: (document: DocumentResponse) => void;
 }
 
-function formatBytes(bytes: number, decimals = 1): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
-
-function formatDate(dateString: string): string {
-  try {
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    }).format(date);
-  } catch {
-    return dateString;
-  }
-}
+// Formatting helpers live in lib/format.ts (shared app-wide).
 
 export default function DocumentList({
   documents,
@@ -46,10 +24,10 @@ export default function DocumentList({
   onOpenUpload,
   onDeleteRequest,
 }: DocumentListProps) {
+  const router = useRouter();
   const [activeActionDocId, setActiveActionDocId] = useState<number | null>(null);
-  const [actionType, setActionType] = useState<'view' | 'download' | 'content' | 'retry' | null>(null);
+  const [actionType, setActionType] = useState<'view' | 'download' | 'retry' | null>(null);
   const [actionError, setActionError] = useState<{ id: number; message: string } | null>(null);
-  const [contentModal, setContentModal] = useState<{ doc: DocumentResponse; content: DocumentContentResponse } | null>(null);
 
   const handleView = async (doc: DocumentResponse) => {
     setActiveActionDocId(doc.id);
@@ -104,7 +82,7 @@ export default function DocumentList({
   // 1. Loading Skeleton
   if (loading) {
     return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200/80 dark:border-slate-700/80 p-6 space-y-4">
+      <div role="status" aria-live="polite" aria-busy="true" className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200/80 dark:border-slate-700/80 p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div className="h-6 w-32 bg-slate-200 dark:bg-slate-700 rounded-md animate-pulse" />
           <div className="h-8 w-24 bg-slate-200 dark:bg-slate-700 rounded-md animate-pulse" />
@@ -136,7 +114,7 @@ export default function DocumentList({
   // 2. Error State
   if (error) {
     return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200/80 dark:border-slate-700/80 p-8 text-center">
+      <div role="alert" aria-live="assertive" className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border border-slate-200/80 dark:border-slate-700/80 p-8 text-center">
         <div className="w-12 h-12 mx-auto rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center justify-center mb-3">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -189,23 +167,8 @@ export default function DocumentList({
     );
   }
 
-  const handleViewContent = async (doc: DocumentResponse) => {
-    setActiveActionDocId(doc.id);
-    setActionType('content');
-    setActionError(null);
-
-    try {
-      const content = await api.getDocumentContent(doc.id);
-      setContentModal({ doc, content });
-    } catch (err) {
-      setActionError({
-        id: doc.id,
-        message: err instanceof Error ? err.message : 'Could not load extracted text.',
-      });
-    } finally {
-      setActiveActionDocId(null);
-      setActionType(null);
-    }
+  const handleViewContent = (doc: DocumentResponse) => {
+    router.push(`/documents/${doc.id}`);
   };
 
   const handleRetry = async (doc: DocumentResponse) => {
@@ -511,53 +474,6 @@ export default function DocumentList({
           );
         })}
       </div>
-      {/* Extracted Text Content Modal */}
-      {contentModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
-          onClick={() => setContentModal(null)}
-        >
-          <div
-            className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                  Extracted Text
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {contentModal.doc.original_filename} &bull; Status: {contentModal.content.status}
-                </p>
-              </div>
-              <button
-                onClick={() => setContentModal(null)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {contentModal.content.extracted_text ? (
-                <pre className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-mono bg-slate-50 dark:bg-slate-900/50 rounded-lg p-4 border border-slate-200 dark:border-slate-700 max-h-96 overflow-y-auto">
-                  {contentModal.content.extracted_text}
-                </pre>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-slate-500 dark:text-slate-400">
-                    {contentModal.content.error_message || 'No extracted text available.'}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

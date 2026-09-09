@@ -18,7 +18,7 @@ Concrete provider (OpenAI-compatible, fake, etc.)
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Iterator
 
 from ...core.config import settings
 from .base import (
@@ -155,6 +155,61 @@ class LLMService:
         )
 
         return response
+
+    def stream_generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> Iterator[str]:
+        """Stream an LLM response incrementally with validation.
+
+        Args:
+            system_prompt: System-level instructions.
+            user_prompt: The user's question or request.
+
+        Yields:
+            Text chunks as they are generated.
+
+        Raises:
+            LLMProviderError: If generation fails.
+            LLMTimeoutError: If the request times out.
+            LLMConfigurationError: If configuration is invalid.
+        """
+        # Validate prompts
+        self._validate_prompt(system_prompt, "system_prompt", MAX_SYSTEM_PROMPT_LENGTH)
+        self._validate_prompt(user_prompt, "user_prompt", MAX_USER_PROMPT_LENGTH)
+
+        if not user_prompt.strip():
+            raise LLMProviderError("user_prompt must not be empty")
+
+        logger.info(
+            "LLM streaming request (provider=%s, model=%s, "
+            "system_len=%d, user_len=%d)",
+            self.provider.name, self.provider.model,
+            len(system_prompt), len(user_prompt),
+        )
+
+        try:
+            yield from self.provider.stream_generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except LLMProviderError:
+            raise
+        except LLMTimeoutError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "LLM provider raised unexpected error during streaming: %s", type(exc).__name__,
+            )
+            raise LLMProviderError(
+                f"LLM provider failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        logger.info(
+            "LLM streaming completed (provider=%s, model=%s)",
+            self.provider.name, self.provider.model,
+        )
 
     def _validate_prompt(
         self, value: str, field_name: str, max_length: int

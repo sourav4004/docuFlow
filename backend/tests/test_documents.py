@@ -84,7 +84,7 @@ def test_upload_authenticated_success():
     assert data["original_filename"] == "invoice_2026.pdf"
     assert data["mime_type"] == "application/pdf"
     assert data["file_size"] == len(VALID_PDF_CONTENT)
-    assert data["status"] == "UPLOADED"
+    assert data["status"] == "QUEUED"
     assert "created_at" in data
     assert "updated_at" in data
     # Ensure sensitive/internal storage paths are not exposed
@@ -114,7 +114,7 @@ def test_upload_creates_database_record_and_file():
         assert doc.original_filename == "specs.pdf"
         assert doc.mime_type == "application/pdf"
         assert doc.file_size == len(VALID_PDF_CONTENT)
-        assert doc.status == "UPLOADED"
+        assert doc.status == "QUEUED"
 
         # Verify storage key is safe and not the original filename
         assert doc.storage_key != "specs.pdf"

@@ -8,7 +8,9 @@ from .embedding_service import generate_document_embeddings, clear_document_embe
 from .vector_search import search_similar_chunks, SearchResult
 from .retrieval_service import retrieve_context, RetrievalResult, RetrievalResponse, RetrievalError, QueryValidationError
 from .llm import LLMProvider, LLMResponse, LLMProviderError, LLMTimeoutError, LLMConfigurationError, LLMService
-from .rag_service import answer_question, RAGError, RAGResponse, SourceReference
+from .rag_service import answer_question, answer_question_with_history, RAGError, RAGResponse, SourceReference
+from .conversation_context import load_conversation_history, format_history_for_prompt, HistoryMessage
+from .source_service import persist_sources
 
 __all__ = [
     "StorageService",
@@ -44,7 +46,12 @@ __all__ = [
     "LLMConfigurationError",
     "LLMService",
     "answer_question",
+    "answer_question_with_history",
     "RAGError",
     "RAGResponse",
     "SourceReference",
+    "load_conversation_history",
+    "format_history_for_prompt",
+    "HistoryMessage",
+    "persist_sources",
 ]
